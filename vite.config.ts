@@ -20,13 +20,7 @@ export default defineConfig({
     },
     host: true,
     strictPort: true,
-    port: 5173,
-    proxy: {
-      '/socket.io': {
-        target: 'ws://localhost:3001',
-        ws: true
-      }
-    }
+    port: 5173
   },
   build: {
     rollupOptions: {

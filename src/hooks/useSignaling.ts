@@ -1,14 +1,18 @@
 import { useEffect, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
 import { useStreamStore } from '../store/useStreamStore';
 
-const SIGNALING_SERVER = 'http://localhost:3001';
+const SIGNALING_SERVER = import.meta.env.VITE_SIGNALING_SERVER || 'http://localhost:3001';
 
 export const useSignaling = () => {
   const { setSocket, addPeer, removePeer } = useStreamStore();
 
   const connect = useCallback(() => {
-    const socket = io(SIGNALING_SERVER);
+    const socket = io(SIGNALING_SERVER, {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: 5
+    });
 
     socket.on('connect', () => {
       console.log('Connected to signaling server');
@@ -20,15 +24,41 @@ export const useSignaling = () => {
       addPeer(viewerId, true);
     });
 
-    socket.on('signal', ({ from, signal }) => {
-      const peer = useStreamStore.getState().peers.get(from);
+    socket.on('signal', async ({ from, signal }) => {
+      const peers = useStreamStore.getState().peers;
+      const peer = peers.get(from)?.connection;
+      
       if (peer) {
-        peer.signal(signal);
+        try {
+          if (signal.type === 'offer') {
+            await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            const answer = await peer.createAnswer();
+            await peer.setLocalDescription(answer);
+            socket.emit('signal', {
+              to: from,
+              signal: { type: 'answer', sdp: answer }
+            });
+          } else if (signal.type === 'answer') {
+            await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          } else if (signal.type === 'candidate') {
+            await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          }
+        } catch (error) {
+          console.error('Error handling signal:', error);
+        }
       }
     });
 
     socket.on('stream-updated', (activeStreams) => {
       useStreamStore.getState().setActiveStreams(activeStreams);
+    });
+
+    socket.on('viewer-left', ({ viewerId }) => {
+      removePeer(viewerId);
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
     });
 
     return socket;
@@ -58,12 +88,6 @@ export const useSignaling = () => {
       const socket = useStreamStore.getState().socket;
       if (socket) {
         socket.emit('join-stream', streamId);
-      }
-    },
-    sendSignal: (to: string, signal: any) => {
-      const socket = useStreamStore.getState().socket;
-      if (socket) {
-        socket.emit('signal', { to, signal });
       }
     }
   };

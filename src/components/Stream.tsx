@@ -5,8 +5,7 @@ import { Users, Share2, Heart, Video, VideoOff, Mic, MicOff } from 'lucide-react
 import { Chat } from './Chat';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStreams } from '../context/StreamContext';
-import SimplePeer from 'simple-peer';
-import { AudioVisualizer } from './AudioVisualizer';
+import { useSignaling } from '../hooks/useSignaling';
 
 const ICE_SERVERS = {
   iceServers: [
@@ -22,10 +21,10 @@ export const Stream: React.FC = () => {
   const [isAudioOnly, setIsAudioOnly] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const peerRef = useRef<SimplePeer.Instance | null>(null);
   const { id } = useParams();
   const navigate = useNavigate();
   const { streams, updateStreamStatus } = useStreams();
+  const { startStream, stopStream, joinStream } = useSignaling();
 
   const stream = streams.find(s => s.id === id);
   const isStreamOwner = connected && stream?.creatorAddress === publicKey?.toString();
@@ -37,40 +36,17 @@ export const Stream: React.FC = () => {
     }
 
     if (!isStreamOwner && stream.isLive) {
-      initViewerPeer();
+      joinStream(stream.id);
     }
 
     return () => {
-      if (peerRef.current) {
-        peerRef.current.destroy();
-      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, [stream, isStreamOwner, navigate]);
 
-  const initViewerPeer = () => {
-    const peer = new SimplePeer({
-      initiator: true,
-      trickle: false,
-      config: ICE_SERVERS
-    });
-
-    peer.on('signal', data => {
-      console.log('Viewer signal:', data);
-    });
-
-    peer.on('stream', stream => {
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    });
-
-    peerRef.current = peer;
-  };
-
-  const startStream = async () => {
+  const handleStartStream = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: !isAudioOnly,
@@ -82,29 +58,17 @@ export const Stream: React.FC = () => {
       }
       streamRef.current = mediaStream;
 
-      const peer = new SimplePeer({
-        initiator: false,
-        trickle: false,
-        stream: mediaStream,
-        config: ICE_SERVERS
-      });
-
-      peer.on('signal', data => {
-        console.log('Broadcaster signal:', data);
-      });
-
-      peerRef.current = peer;
-      setIsStreaming(true);
-      
       if (id) {
+        startStream(id);
         updateStreamStatus(id, true);
+        setIsStreaming(true);
       }
     } catch (error) {
       console.error('Error accessing media devices:', error);
     }
   };
 
-  const stopStream = () => {
+  const handleStopStream = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       if (videoRef.current) {
@@ -113,13 +77,9 @@ export const Stream: React.FC = () => {
       streamRef.current = null;
     }
 
-    if (peerRef.current) {
-      peerRef.current.destroy();
-      peerRef.current = null;
-    }
-
     setIsStreaming(false);
     if (id) {
+      stopStream(id);
       updateStreamStatus(id, false);
     }
   };
@@ -154,11 +114,11 @@ export const Stream: React.FC = () => {
                 />
               )}
               
-              {isAudioOnly && isStreamOwner && streamRef.current && (
+              {isAudioOnly && isStreamOwner && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-800 p-8">
                   <Mic className="w-16 h-16 text-purple-400 mb-4" />
                   <p className="text-white text-lg font-medium mb-8">Audio Only Stream</p>
-                  <AudioVisualizer stream={streamRef.current} />
+                  <div className="w-full h-24 bg-gray-700 rounded-lg animate-pulse" />
                 </div>
               )}
               
@@ -166,7 +126,7 @@ export const Stream: React.FC = () => {
                 <div className="absolute bottom-4 right-4 flex gap-2">
                   {isStreaming ? (
                     <button
-                      onClick={stopStream}
+                      onClick={handleStopStream}
                       className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center gap-2 transition-colors"
                     >
                       {isAudioOnly ? <MicOff className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
@@ -184,7 +144,7 @@ export const Stream: React.FC = () => {
                         {isAudioOnly ? 'Audio Only' : 'Video + Audio'}
                       </button>
                       <button
-                        onClick={startStream}
+                        onClick={handleStartStream}
                         className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 transition-colors"
                       >
                         {isAudioOnly ? <Mic className="w-5 h-5" /> : <Video className="w-5 h-5" />}
